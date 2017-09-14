@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"time"
 
@@ -20,6 +23,7 @@ var (
 	limit        = flag.Int64("limit", 100, "limit records length of each GetRecords request.")
 	interval     = flag.Duration("interval", time.Second*3, "seconds for waiting next GetRecords request.")
 	startTime    = flag.String("start-time", "", "timestamp to start reading. only enable when iterator type is AT_TIMESTAMP. acceptable format is YYYY-MM-DDThh:mm:ss.sssTZD (RFC3339 format). For example, 2016-04-20T12:00:00+09:00 is acceptable.")
+	gzipped      = flag.Bool("gzip", false, "compressed by gzip")
 )
 
 type Client struct {
@@ -92,12 +96,33 @@ func (c *Client) fetch(shardIterator *string) (nextShardIterator *string, err er
 	}
 	for _, r := range records.Records {
 		fmt.Printf("ApproximateArrivalTimestamp: %v\n", r.ApproximateArrivalTimestamp)
-		if len(r.Data) > c.maxItemSize {
-			fmt.Printf("Data: %s\n", r.Data[:c.maxItemSize-1])
+
+		data := r.Data
+		if *gzipped {
+			data, err = decompressGzip(data)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if len(data) > c.maxItemSize {
+			fmt.Printf("Data: %s\n", data[:c.maxItemSize-1])
 		} else {
-			fmt.Printf("Data: %s\n", r.Data[:])
+			fmt.Printf("Data: %s\n", data[:])
 		}
 		fmt.Printf("SequenceNumber: %s\n", *r.SequenceNumber)
 	}
 	return records.NextShardIterator, nil
+}
+
+func decompressGzip(data []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	data, err = ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
